@@ -1,0 +1,29 @@
+{
+  "name": "angular-schema-form-someof",
+  "version": "0.0.1",
+  "authors": [
+    "Daniel Schaffer <dan@dandoes.net>"
+  ],
+  "description": "someOf (anyOf/oneOf/allOf) support for Angular Schema Form",
+  "main": "dist/angular-schema-form-someof.js",
+  "keywords": [
+    "angular-schema-form-someof"
+  ],
+  "license": "MIT",
+  "ignore": [
+    "src/**/.*",
+    "gulp/**/.*",
+    "node_modules",
+    "bower_components",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "lodash": "*",
+    "angular-schema-form": "git@github.com:DanielSchaffer/angular-schema-form.git#danielschaffer-someof",
+    "angular-schema-form-bootstrap": "git@github.com:DanielSchaffer/angular-schema-form-bootstrap.git#danielschaffer-someof"
+  },
+  "resolutions": {
+    "angular-schema-form": "danielschaffer-someof"
+  }
+}

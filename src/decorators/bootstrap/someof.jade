@@ -1,0 +1,7 @@
+fieldset(   class="schema-form-fieldset {{form.htmlClass}} schema-form-someof"
+            ng-disabled="form.readonly"
+            sf-some-of='$$value$$'
+            sf-field-model='sf-some-of')
+    legend(ng-class="{'sr-only': !showTitle() }")
+        | {{ form.title }}
+    .help-block(ng-show="form.description", ng-bind-html="form.description")
