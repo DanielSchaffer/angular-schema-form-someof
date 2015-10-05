@@ -10,8 +10,8 @@
 angular.module("schemaForm").run(["$templateCache", function($templateCache) {$templateCache.put("decorators/bootstrap/someof-selector.html","<div ng-class=\"{\'has-error\': form.disableErrorState !== true &amp;&amp; hasError(), \'has-success\': form.disableSuccessState !== true &amp;&amp; hasSuccess(), \'has-feedback\': form.feedback !== false}\" class=\"form-group {{form.htmlClass}} schema-form-select\"><label ng-show=\"showTitle()\" class=\"control-label {{form.labelHtmlClass}}\">{{form.title}}</label><select name=\"{{form.key.slice(-1)[0]}}\" ng-model=\"form.selector.current\" ng-disabled=\"form.readonly\" sf-some-of-selector=\"sf-some-of-selector\" ng-options=\"item.value as item.name group by item.group for item in form.titleMap\" class=\"form-control {{form.fieldHtmlClass}}\"></select><div sf-message=\"form.description\" class=\"help-block\"></div></div>");
 $templateCache.put("decorators/bootstrap/someof.html","<fieldset ng-disabled=\"form.readonly\" sf-some-of=\"$$value$$\" sf-field-model=\"sf-some-of\" class=\"schema-form-fieldset {{form.htmlClass}} schema-form-someof\"><legend ng-class=\"{\'sr-only\': !showTitle() }\">{{ form.title }}</legend><div ng-show=\"form.description\" ng-bind-html=\"form.description\" class=\"help-block\"></div></fieldset>");}]);
 var schemaFormSomeOf;
-angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaFormProvider', 'sfBuilderProvider', 'sfPathProvider', function (
-  decoratorsProvider, sfProvider, sfBuilderProvider, sfPathProvider) {
+angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaFormProvider', 'sfBuilderProvider', 'sfPathProvider', 'someOfProvider', function (
+  decoratorsProvider, sfProvider, sfBuilderProvider, sfPathProvider, someOfProvider) {
 
   var ofNodeTypes = {
     oneOf: 'oneof',
@@ -23,6 +23,7 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
     var f = sfProvider.defaultFormDefinition(name, _.extend({}, schema, { type: 'object' }), options);
     f.type = 'someof-fieldset';
     f.key = options.path.slice();
+    f.carryover = {};
     return f;
   }
 
@@ -62,24 +63,57 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
       return null;
     }
 
-    var selector = sfProvider.defaultFormDefinition(node, _.extend(_.pick(schema, node, 'title', 'name'), { type: node }), options);
-    if (!selector) {
-      return null;
+    var differentiator = someOfProvider.someOfDifferentiatorProperty();
+    var useDifferentiator = differentiator && schema[differentiator];
+    if (!useDifferentiator) {
+      var selector = sfProvider.defaultFormDefinition(node, _.extend(_.pick(schema, node, 'title', 'name'), {type: node}), options);
+      if (!selector) {
+        return null;
+      }
+      fieldset.selector = selector;
+      fieldset.items.push(selector);
     }
-    fieldset.selector = selector;
-    fieldset.items.push(selector);
 
     angular.forEach(schema[node], function (item) {
-      var optionForm = sfProvider.defaultFormDefinition(item.title || item.name, angular.extend(item, { type: 'object' }), options);
+      var optionForm = sfProvider.defaultFormDefinition(
+        item.title || item.name,
+        angular.extend(item, {type: 'object'}),
+        options
+      );
+
       if (optionForm) {
         optionForm.selector = selector;
-        optionForm.condition = 'form.selector.current === \'' + (item.title || item.name) + '\'';
+        if (useDifferentiator) {
+          var diffKey = fieldset.key.slice();
+          diffKey.push(differentiator);
+          optionForm.condition = 'model' + buildModelPath(diffKey) + ' === \'' + item.properties[differentiator].enum[0] + '\'';
+          if (optionForm.items) {
+            optionForm.items = _.filter(optionForm.items, function (item) {
+              return !_.has(schema.properties, item.title);
+            });
+            _.each(optionForm.items, function (item) {
+              item.destroyStrategy = 'carry';
+              item.carryover = fieldset.carryover;
+            });
+          }
+        } else {
+          optionForm.condition = 'form.selector.current === \'' + (item.title || item.name) + '\'';
+          selector.forms.push(optionForm);
+        }
         fieldset.items.push(optionForm);
-        selector.forms.push(optionForm);
       }
     });
 
     return fieldset;
+  }
+
+  function buildModelPath(key) {
+    return _.map(key, function (segment) {
+      if (segment !== '') {
+        return '[\'' + segment + '\']';
+      }
+      return '[arrayIndex]'
+    }).join('');
   }
 
   var simpleTransclusion  = sfBuilderProvider.builders.simpleTransclusion;
@@ -89,6 +123,11 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
   var condition           = sfBuilderProvider.builders.condition;
   var array               = sfBuilderProvider.builders.array;
 
+  function carryoverBuilder(args) {
+    if (args.form.destroyStrategy === 'carry') {
+      args.fieldFrag.firstChild.setAttribute('sf-carryover', '');
+    }
+  }
 
   sfProvider.prependRule('object', someOf);
   sfProvider.prependRule('someOfFieldset', someOfFieldset);
@@ -103,6 +142,84 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
     ]);
   });
 
+  var decorator = decoratorsProvider.decorator();
+  _.each(decorator, function (type) {
+    if (type.builder) {
+      type.builder.push(carryoverBuilder);
+    }
+  });
+
+
+
+}]);
+
+angular.module('schemaForm').provider('someOf', function () {
+
+  var someOfDifferentiatorPropertyName;
+
+  this.someOfDifferentiatorProperty = function someOfDifferentiatorProperty(propertyName) {
+    if (typeof(propertyName) !== 'undefined') {
+      someOfDifferentiatorPropertyName = propertyName;
+    }
+    return someOfDifferentiatorPropertyName
+  };
+
+  this.$get = [function () {
+    return {};
+  }];
+
+});
+angular.module('schemaForm').directive('sfCarryover',
+['sfSelect', function sfCarryover(sfSelect) {
+  return {
+    scope: false,
+    priority: 100,
+    link: {
+      pre: function sfCarryoverPreLink(scope, element, attrs) {
+        scope.$on('schemaFormPropagateNgModelController', function (event, ngModel, ngModelExpr) {
+          if (scope.form.carryover) {
+            var carryoverKey = scope.form.key[scope.form.key.length - 1];
+            if (carryoverKey && typeof(scope.form.carryover[carryoverKey]) !== 'undefined') {
+              var expr = (attrs.sfNewArray || ngModelExpr) + '=carryoverValue';
+              scope.$eval(expr, { carryoverValue: scope.form.carryover[carryoverKey] });
+            }
+          }
+        });
+
+        scope.$on('$destroy', function () {
+          var form = scope.form;
+          if (!scope.externalDestructionInProgress) {
+            var destroyStrategy = form.destroyStrategy ||
+              (scope.options && scope.options.destroyStrategy) || 'remove';
+            // No key no model, and we might have strategy 'retain'
+            if (form.key && destroyStrategy === 'carry') {
+
+              // Get the object that has the property we want to clear.
+              var obj = scope.model;
+              if (form.key.length > 1) {
+                var key = _.map(form.key.slice(0, form.key.length - 1), function (segment) {
+                  if (segment === '') {
+                    return scope.$index;
+                  }
+                  return segment;
+                });
+                obj = sfSelect(key, obj);
+              }
+
+              // We can get undefined here if the form hasn't been filled out entirely
+              if (typeof(obj) === 'undefined') {
+                return;
+              }
+
+              var propKey = form.key.slice(-1);
+              form.carryover[propKey] = obj[propKey];
+              delete obj[propKey];
+            }
+          }
+        });
+      }
+    }
+  };
 }]);
 angular.module('schemaForm').directive('sfSomeOf',
 function () {

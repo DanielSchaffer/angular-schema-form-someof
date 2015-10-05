@@ -1,6 +1,6 @@
 var schemaFormSomeOf;
-angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaFormProvider', 'sfBuilderProvider', 'sfPathProvider', function (
-  decoratorsProvider, sfProvider, sfBuilderProvider, sfPathProvider) {
+angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaFormProvider', 'sfBuilderProvider', 'sfPathProvider', 'someOfProvider', function (
+  decoratorsProvider, sfProvider, sfBuilderProvider, sfPathProvider, someOfProvider) {
 
   var ofNodeTypes = {
     oneOf: 'oneof',
@@ -12,6 +12,7 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
     var f = sfProvider.defaultFormDefinition(name, _.extend({}, schema, { type: 'object' }), options);
     f.type = 'someof-fieldset';
     f.key = options.path.slice();
+    f.carryover = {};
     return f;
   }
 
@@ -51,24 +52,57 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
       return null;
     }
 
-    var selector = sfProvider.defaultFormDefinition(node, _.extend(_.pick(schema, node, 'title', 'name'), { type: node }), options);
-    if (!selector) {
-      return null;
+    var differentiator = someOfProvider.someOfDifferentiatorProperty();
+    var useDifferentiator = differentiator && schema[differentiator];
+    if (!useDifferentiator) {
+      var selector = sfProvider.defaultFormDefinition(node, _.extend(_.pick(schema, node, 'title', 'name'), {type: node}), options);
+      if (!selector) {
+        return null;
+      }
+      fieldset.selector = selector;
+      fieldset.items.push(selector);
     }
-    fieldset.selector = selector;
-    fieldset.items.push(selector);
 
     angular.forEach(schema[node], function (item) {
-      var optionForm = sfProvider.defaultFormDefinition(item.title || item.name, angular.extend(item, { type: 'object' }), options);
+      var optionForm = sfProvider.defaultFormDefinition(
+        item.title || item.name,
+        angular.extend(item, {type: 'object'}),
+        options
+      );
+
       if (optionForm) {
         optionForm.selector = selector;
-        optionForm.condition = 'form.selector.current === \'' + (item.title || item.name) + '\'';
+        if (useDifferentiator) {
+          var diffKey = fieldset.key.slice();
+          diffKey.push(differentiator);
+          optionForm.condition = 'model' + buildModelPath(diffKey) + ' === \'' + item.properties[differentiator].enum[0] + '\'';
+          if (optionForm.items) {
+            optionForm.items = _.filter(optionForm.items, function (item) {
+              return !_.has(schema.properties, item.title);
+            });
+            _.each(optionForm.items, function (item) {
+              item.destroyStrategy = 'carry';
+              item.carryover = fieldset.carryover;
+            });
+          }
+        } else {
+          optionForm.condition = 'form.selector.current === \'' + (item.title || item.name) + '\'';
+          selector.forms.push(optionForm);
+        }
         fieldset.items.push(optionForm);
-        selector.forms.push(optionForm);
       }
     });
 
     return fieldset;
+  }
+
+  function buildModelPath(key) {
+    return _.map(key, function (segment) {
+      if (segment !== '') {
+        return '[\'' + segment + '\']';
+      }
+      return '[arrayIndex]'
+    }).join('');
   }
 
   var simpleTransclusion  = sfBuilderProvider.builders.simpleTransclusion;
@@ -78,6 +112,11 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
   var condition           = sfBuilderProvider.builders.condition;
   var array               = sfBuilderProvider.builders.array;
 
+  function carryoverBuilder(args) {
+    if (args.form.destroyStrategy === 'carry') {
+      args.fieldFrag.firstChild.setAttribute('sf-carryover', '');
+    }
+  }
 
   sfProvider.prependRule('object', someOf);
   sfProvider.prependRule('someOfFieldset', someOfFieldset);
@@ -92,4 +131,30 @@ angular.module('schemaForm').config(['schemaFormDecoratorsProvider', 'schemaForm
     ]);
   });
 
+  var decorator = decoratorsProvider.decorator();
+  _.each(decorator, function (type) {
+    if (type.builder) {
+      type.builder.push(carryoverBuilder);
+    }
+  });
+
+
+
 }]);
+
+angular.module('schemaForm').provider('someOf', function () {
+
+  var someOfDifferentiatorPropertyName;
+
+  this.someOfDifferentiatorProperty = function someOfDifferentiatorProperty(propertyName) {
+    if (typeof(propertyName) !== 'undefined') {
+      someOfDifferentiatorPropertyName = propertyName;
+    }
+    return someOfDifferentiatorPropertyName
+  };
+
+  this.$get = [function () {
+    return {};
+  }];
+
+});
